@@ -1,0 +1,25 @@
+[toolchain]
+package_manager = "pnpm"
+anchor_version = "0.31.0"
+
+[features]
+resolution = true
+skip-lint = false
+
+[programs.localnet]
+owhership_nft = "6HJN3E7nkbExcwfw8YkztMFC2vcfPBQwmDLrkEMJqnqM"
+
+[registry]
+url = "https://api.apr.dev"
+
+[provider]
+cluster = "Localnet"
+wallet = "./solana/id.json"
+
+[scripts]
+test = "pnpm exec jest --preset ts-jest"
+
+[test.validator]
+bind_address = "127.0.0.1"
+ledger = ".anchor/test-ledger"
+rpc_port = 8899
