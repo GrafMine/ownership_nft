@@ -1,4 +1,5 @@
-import { MPL_TOKEN_METADATA_PROGRAM_ID as MPL_ID_STR } from "@metaplex-foundation/mpl-token-metadata";
+// import { MPL_TOKEN_METADATA_PROGRAM_ID as MPL_ID_STR } from "@metaplex-foundation/mpl-token-metadata";
+
 import { TOKEN_PROGRAM_ID as SPL_TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { Keypair, SystemProgram, PublicKey } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
@@ -15,10 +16,29 @@ import {
 } from "@solana/spl-token";
 
 jest.setTimeout(60000);
-const MPL_TOKEN_METADATA_PROGRAM_ID = new PublicKey(MPL_ID_STR);
+// const MPL_TOKEN_METADATA_PROGRAM_ID = new PublicKey(MPL_ID_STR);
+// export declare const MPL_TOKEN_METADATA_PROGRAM_ID: PublicKey<"metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s">;
+const MPL_TOKEN_METADATA_PROGRAM_ID = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
+
+process.env.ANCHOR_PROVIDER_LOGS = "true";
 
 describe("Initialize Token", () => {
-  const ADMIN_KEYPAIR = Keypair.generate();
+
+  const secret = Uint8Array.from(
+    [206,241,118,125,82,225,7,5,234,9,67,209,37,100,26,183,190,244,124,81,227,190,190,180,237,2,24,70,14,131,36,186,196,49,119,241,84,72,174,21,39,203,148,43,111,97,189,117,219,157,187,242,107,205,96,30,175,144,175,16,189,127,73,85]
+  );
+   const kp = Keypair.fromSecretKey(secret);
+   console.log("kp.publicKey.toBase58()", kp.publicKey.toBase58());
+
+
+  // Массив из admin-keypair.json (64 байта)
+  const ADMIN_SECRET_KEY = Uint8Array.from([
+    206,241,118,125,82,225,7,5,234,9,67,209,37,100,26,183,190,244,124,81,227,190,190,180,237,2,24,70,14,131,36,186,196,49,119,241,84,72,174,21,39,203,148,43,111,97,189,117,219,157,187,242,107,205,96,30,175,144,175,16,189,127,73,85
+  ]);
+  const ADMIN_KEYPAIR = Keypair.fromSecretKey(ADMIN_SECRET_KEY);
+
+  console.log("ADMIN_KEYPAIR pubkey:", ADMIN_KEYPAIR.publicKey.toBase58());
+  console.log("kp.publicKey.toBase58():", kp.publicKey.toBase58());
 
   // Configure the client to use the local cluster.
   const provider = anchor.AnchorProvider.env();
@@ -45,18 +65,30 @@ describe("Initialize Token", () => {
     );
     const [ownershipNftMetadataPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("metadata"), MPL_TOKEN_METADATA_PROGRAM_ID.toBytes(), ownershipNftMintPda.toBytes()],
-      MPL_TOKEN_METADATA_PROGRAM_ID // Pass the PublicKey object
+      MPL_TOKEN_METADATA_PROGRAM_ID
     );
     const [ownershipNftMasterEditionPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("metadata"), MPL_TOKEN_METADATA_PROGRAM_ID.toBytes(), ownershipNftMintPda.toBytes(), Buffer.from("edition")],
-      MPL_TOKEN_METADATA_PROGRAM_ID // Pass the PublicKey object
+      MPL_TOKEN_METADATA_PROGRAM_ID
     );
-    const ownershipNftTokenAccount = getAssociatedTokenAddressSync(ownershipNftMintPda, lotteryCreator.publicKey);
+    // --- ЯВНЫЙ ВЫВОД ДЛЯ ДЕБАГА ---
+    console.log("ticketIdBytes (hex):", Buffer.from(ticketIdBytes).toString("hex"));
+    console.log("ownershipNftMintPda:", ownershipNftMintPda.toBase58());
+    console.log("ownershipNftMetadataPda:", ownershipNftMetadataPda.toBase58());
+    // --- конец дебага ---
+    const ownershipNftTokenAccount = getAssociatedTokenAddressSync(
+      ownershipNftMintPda,      // Mint
+      lotteryCreator.publicKey, // Owner
+      false,                    // allowOwnerOffCurve - usually false
+      TOKEN_2022_PROGRAM_ID,    // <<< ADDED: Token program ID
+      ASSOCIATED_TOKEN_PROGRAM_ID // <<< ADDED: ATA program ID
+    );
     // --- Call Instruction ---
     console.log("Calling initLotteryToken...");
     console.log("Payer (Lottery Creator):", lotteryCreator.publicKey.toBase58());
     console.log("Admin Pubkey:", ADMIN_KEYPAIR.publicKey.toBase58());
     console.log("Ownership NFT Mint PDA:", ownershipNftMintPda.toBase58());
+    console.log("ADMIN_KEYPAIR pubkey:", ADMIN_KEYPAIR.publicKey.toBase58());
   
 
     try {
@@ -78,22 +110,7 @@ describe("Initialize Token", () => {
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
         splTokenProgram: SPL_TOKEN_PROGRAM_ID,
       };
-
-      // --- CHANGE: Calculate size/rent for ONLY participation mint and create instructions ---
-
-      // 1. Ownership NFT Mint - NO LONGER CREATED HERE
-      // const ownershipExtensions = [ExtensionType.TransferHook, ExtensionType.MetadataPointer]; // Assuming same extensions for NFT for now
-      // const ownershipMintLen = getMintLen(ownershipExtensions);
-      // const lamportsForOwnershipMint = await provider.connection.getMinimumBalanceForRentExemption(ownershipMintLen);
-      // console.log(`Calculated Ownership NFT mint size: ${ownershipMintLen}, Rent required: ${lamportsForOwnershipMint}`);
-      // const createOwnershipNftMintAccountIx = SystemProgram.createAccount({
-      //     fromPubkey: lotteryCreator.publicKey, // Payer
-      //     newAccountPubkey: ownershipNftMintPda, // New account PDA
-      //     lamports: lamportsForOwnershipMint, // Rent
-      //     space: ownershipMintLen, // Size
-      //     programId: TOKEN_2022_PROGRAM_ID, // Owner - MUST be token program
-      // });
-      // console.log("Create Ownership NFT Mint Account instruction created.");
+      console.log("accounts.tokenMetadataProgram:", accounts.tokenMetadataProgram.toBase58());
 
       // 2. Participation Token Mint
       const participationExtensions = [ExtensionType.TransferHook, ExtensionType.MetadataPointer];
@@ -120,7 +137,6 @@ describe("Initialize Token", () => {
 
       // 4. Assemble the transaction with TWO instructions (Order matters!)
       const transaction = new anchor.web3.Transaction();
-      // transaction.add(createOwnershipNftMintAccountIx); // REMOVED: First, create ownership NFT mint
       transaction.add(createParticipationMintAccountIx); // FIRST, create participation token mint
       transaction.add(initLotteryTokenInstruction); // THEN, the main instruction
       console.log("Transaction created with 2 instructions.");

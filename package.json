@@ -4,7 +4,7 @@
     "anchor-build": "anchor build",
     "anchor-deploy:init": "solana program-v4 deploy ./target/deploy/owhership_nft.so --program-keypair ./target/deploy/owhership_nft-keypair.json --buffer ./solana/buffer-owhership_nft-deploy-keypair.json",
     "anchor-deploy:update": "solana program-v4 deploy ./target/deploy/owhership_nft.so --program-id ./target/deploy/owhership_nft-keypair.json --buffer ./solana/buffer-owhership_nft-deploy-keypair.json",
-    "anchor-test:init_token": "anchor test --skip-local-validator --skip-build --skip-deploy ./tests/owhership_nft.spec.ts",
+    "anchor-test:init_token": "RUST_LOG=debug anchor test --skip-local-validator --skip-build --skip-deploy ./tests/owhership_nft.spec.ts",
     "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
     "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check"
   },
