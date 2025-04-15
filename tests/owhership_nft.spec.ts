@@ -1,18 +1,19 @@
+import { MPL_TOKEN_METADATA_PROGRAM_ID as MPL_ID_STR } from "@metaplex-foundation/mpl-token-metadata";
+import { TOKEN_PROGRAM_ID as SPL_TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { Keypair, SystemProgram, PublicKey } from "@solana/web3.js";
+import { getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { OwhershipNft } from "../target/types/owhership_nft";
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
-import { Keypair, SystemProgram, PublicKey } from "@solana/web3.js";
-import { OwhershipNft } from "../target/types/owhership_nft"; // Adjust path based on your actual types location
+import { v4 as uuidv4 } from 'uuid';
+import { parse } from 'uuid-parse';
 import {
   TOKEN_2022_PROGRAM_ID,
   ExtensionType,
   getMintLen,
   ASSOCIATED_TOKEN_PROGRAM_ID
 } from "@solana/spl-token";
-import { TOKEN_PROGRAM_ID as SPL_TOKEN_PROGRAM_ID } from "@solana/spl-token";
-import { getAssociatedTokenAddressSync } from "@solana/spl-token";
-import { MPL_TOKEN_METADATA_PROGRAM_ID as MPL_ID_STR } from "@metaplex-foundation/mpl-token-metadata";
-import { v4 as uuidv4 } from 'uuid';
-import { parse } from 'uuid-parse';
+
 jest.setTimeout(60000);
 const MPL_TOKEN_METADATA_PROGRAM_ID = new PublicKey(MPL_ID_STR);
 
@@ -78,21 +79,21 @@ describe("Initialize Token", () => {
         splTokenProgram: SPL_TOKEN_PROGRAM_ID,
       };
 
-      // --- CHANGE: Calculate size/rent for BOTH mints and create instructions ---
+      // --- CHANGE: Calculate size/rent for ONLY participation mint and create instructions ---
 
-      // 1. Ownership NFT Mint
-      const ownershipExtensions = [ExtensionType.TransferHook, ExtensionType.MetadataPointer]; // Assuming same extensions for NFT for now
-      const ownershipMintLen = getMintLen(ownershipExtensions);
-      const lamportsForOwnershipMint = await provider.connection.getMinimumBalanceForRentExemption(ownershipMintLen);
-      console.log(`Calculated Ownership NFT mint size: ${ownershipMintLen}, Rent required: ${lamportsForOwnershipMint}`);
-      const createOwnershipNftMintAccountIx = SystemProgram.createAccount({
-          fromPubkey: lotteryCreator.publicKey, // Payer
-          newAccountPubkey: ownershipNftMintPda, // New account PDA
-          lamports: lamportsForOwnershipMint, // Rent
-          space: ownershipMintLen, // Size
-          programId: TOKEN_2022_PROGRAM_ID, // Owner - MUST be token program
-      });
-      console.log("Create Ownership NFT Mint Account instruction created.");
+      // 1. Ownership NFT Mint - NO LONGER CREATED HERE
+      // const ownershipExtensions = [ExtensionType.TransferHook, ExtensionType.MetadataPointer]; // Assuming same extensions for NFT for now
+      // const ownershipMintLen = getMintLen(ownershipExtensions);
+      // const lamportsForOwnershipMint = await provider.connection.getMinimumBalanceForRentExemption(ownershipMintLen);
+      // console.log(`Calculated Ownership NFT mint size: ${ownershipMintLen}, Rent required: ${lamportsForOwnershipMint}`);
+      // const createOwnershipNftMintAccountIx = SystemProgram.createAccount({
+      //     fromPubkey: lotteryCreator.publicKey, // Payer
+      //     newAccountPubkey: ownershipNftMintPda, // New account PDA
+      //     lamports: lamportsForOwnershipMint, // Rent
+      //     space: ownershipMintLen, // Size
+      //     programId: TOKEN_2022_PROGRAM_ID, // Owner - MUST be token program
+      // });
+      // console.log("Create Ownership NFT Mint Account instruction created.");
 
       // 2. Participation Token Mint
       const participationExtensions = [ExtensionType.TransferHook, ExtensionType.MetadataPointer];
@@ -117,12 +118,12 @@ describe("Initialize Token", () => {
           .instruction();
       console.log("Main program instruction created.");
 
-      // 4. Assemble the transaction with THREE instructions (Order matters!)
+      // 4. Assemble the transaction with TWO instructions (Order matters!)
       const transaction = new anchor.web3.Transaction();
-      transaction.add(createOwnershipNftMintAccountIx); // First, create ownership NFT mint
-      transaction.add(createParticipationMintAccountIx); // Second, create participation token mint
-      transaction.add(initLotteryTokenInstruction); // Then, the main instruction
-      console.log("Transaction created with 3 instructions.");
+      // transaction.add(createOwnershipNftMintAccountIx); // REMOVED: First, create ownership NFT mint
+      transaction.add(createParticipationMintAccountIx); // FIRST, create participation token mint
+      transaction.add(initLotteryTokenInstruction); // THEN, the main instruction
+      console.log("Transaction created with 2 instructions.");
 
       // 5. Set the fee payer and blockhash
       transaction.feePayer = lotteryCreator.publicKey;
@@ -132,12 +133,12 @@ describe("Initialize Token", () => {
       // 6. Sign the transaction with the required keys:
       //    - lotteryCreator (payer) - signed last via provider.wallet
       //    - ADMIN_KEYPAIR - required by the main instruction
-      //    - participationTokenMintKp - NOT required anymore <-- This comment is now incorrect
+      //    - participationTokenMintKp - Required for createAccount
 
       // Sign with "additional" keys
       transaction.partialSign(ADMIN_KEYPAIR);
-      transaction.partialSign(participationTokenMintKp); // <-- RESTORED: Required for createAccount
-      console.log("Transaction partially signed by Admin and Participation Mint Kp."); // Updated log
+      transaction.partialSign(participationTokenMintKp); // Required for createAccount
+      console.log("Transaction partially signed by Admin and Participation Mint Kp.");
 
       // Final signing by the payer's wallet
       const signedTx = await provider.wallet.signTransaction(transaction);

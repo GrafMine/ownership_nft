@@ -1,12 +1,14 @@
 #![allow(unexpected_cfgs)]
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program;
 use anchor_spl::token_2022::{self as token_2022_program, InitializeMint, Token2022, MintTo};
 use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token::Token;
-use anchor_spl::token_interface::{Mint, TokenAccount};
+use anchor_spl::token_interface::TokenAccount;
 use spl_token_2022::{
     ID as SPL_TOKEN_2022_PROGRAM_ID,
-    extension::{metadata_pointer, transfer_hook},
+    extension::{metadata_pointer, transfer_hook, ExtensionType},
+    state::Mint as MintState,
 };
 use mpl_token_metadata::{
     ID as TOKEN_METADATA_PROGRAM_ID,
@@ -17,6 +19,7 @@ use mpl_token_metadata::{
     },
 };
 use std::fmt::Write;
+use solana_program::system_instruction;
 
 declare_id!("6HJN3E7nkbExcwfw8YkztMFC2vcfPBQwmDLrkEMJqnqM");
 
@@ -67,7 +70,6 @@ pub mod owhership_nft {
         let ownership_nft_master_edition = &ctx.accounts.ownership_nft_master_edition;
         let ownership_nft_token_account = &ctx.accounts.ownership_nft_token_account;
     
-        // Get PDA signer seeds for Ownership NFT Mint
         let ticket_id_bytes = args.ticket_id.as_ref();
         let nft_mint_bump_bytes = [ctx.bumps.ownership_nft_mint];
         let nft_mint_seeds = &[
@@ -77,26 +79,30 @@ pub mod owhership_nft {
         ][..];
         let nft_mint_signer_seeds = &[nft_mint_seeds];
     
-        // 2. Initialize the Ownership NFT Mint itself
-        msg!("Initializing Ownership NFT Mint data (decimals, authorities)...");
-        let init_mint_nft_accounts = InitializeMint {
-            mint: ownership_nft_mint.to_account_info(),
-            rent: rent.to_account_info(),
-        };
-        let init_mint_nft_ctx = CpiContext::new_with_signer(
-            token_program.to_account_info(),
-            init_mint_nft_accounts,
-            nft_mint_signer_seeds,
+        msg!("Calculating size and rent for Ownership NFT Mint...");
+        let extensions = [ExtensionType::MetadataPointer, ExtensionType::TransferHook];
+        let space = ExtensionType::try_calculate_account_len::<MintState>(&extensions)?;
+        let lamports = Rent::get()?.minimum_balance(space);
+
+        msg!("Creating Ownership NFT Mint Account (PDA)...");
+        let create_nft_mint_account_ix = system_instruction::create_account(
+            &payer.key(),
+            &ownership_nft_mint.key(),
+            lamports,
+            space as u64,
+            &token_program.key(),
         );
-        token_2022_program::initialize_mint(
-            init_mint_nft_ctx,
-            0,
-            &admin.key(),
-            Some(&admin.key()),
+        anchor_lang::solana_program::program::invoke_signed(
+            &create_nft_mint_account_ix,
+            &[
+                payer.to_account_info(),
+                ownership_nft_mint.to_account_info(),
+                system_program.to_account_info(),
+            ],
+            nft_mint_signer_seeds,
         )?;
+        msg!("Ownership NFT Mint Account created.");
     
-        // 1. Initialize Ownership NFT Mint Extensions
-        // 1.1 Metadata Pointer
         msg!("Initializing Metadata Pointer for Ownership NFT...");
         let init_nft_meta_ptr_ix = metadata_pointer::instruction::initialize(
             &token_program.key(),
@@ -113,7 +119,6 @@ pub mod owhership_nft {
             nft_mint_signer_seeds,
         )?;
     
-        // 1.2 Transfer Hook (using constant)
         let maybe_nft_hook_id: Option<Pubkey> = Some(OWNERSHIP_NFT_TRANSFER_HOOK_PROGRAM_ID);
         if let Some(hook_program_id) = maybe_nft_hook_id {
              msg!("Initializing Transfer Hook for Ownership NFT...");
@@ -133,7 +138,23 @@ pub mod owhership_nft {
             )?;
         }
     
-        // 3. Create Metaplex Metadata for Ownership NFT
+        msg!("Initializing Ownership NFT Mint data (decimals, authorities)...");
+        let init_mint_nft_accounts = InitializeMint {
+            mint: ownership_nft_mint.to_account_info(),
+            rent: rent.to_account_info(),
+        };
+        let init_mint_nft_ctx = CpiContext::new_with_signer(
+            token_program.to_account_info(),
+            init_mint_nft_accounts,
+            nft_mint_signer_seeds,
+        );
+        token_2022_program::initialize_mint(
+            init_mint_nft_ctx,
+            0,
+            &admin.key(),
+            Some(&admin.key()),
+        )?;
+    
         msg!("Creating Metaplex Metadata for Ownership NFT...");
         let ownership_nft_symbol = OWNERSHIP_NFT_SYMBOL.to_string();
         let ownership_token_name = generate_lottery_token_name(&args.ticket_id);
@@ -153,7 +174,7 @@ pub mod owhership_nft {
             uses: None,
         });
     
-        let nft_mint_key = ownership_nft_mint.key(); // Get the key here
+        let nft_mint_key = ownership_nft_mint.key();
         let create_nft_metadata_accounts = CreateMetadataAccountV3 {
             metadata: ownership_nft_metadata.key(),
             mint: nft_mint_key,
@@ -193,7 +214,6 @@ pub mod owhership_nft {
             nft_metadata_signer_seeds
         )?;
     
-        // 4. Mint 1 Ownership NFT to the user's (payer) ATA
         msg!("Minting Ownership NFT to payer...");
         let mint_nft_accounts = MintTo {
             mint: ownership_nft_mint.to_account_info(),
@@ -206,7 +226,6 @@ pub mod owhership_nft {
         );
         token_2022_program::mint_to(mint_nft_ctx, 1)?;
     
-        // 5. Create Master Edition for Ownership NFT
         msg!("Creating Master Edition for Ownership NFT...");
         let create_master_edition_accounts = CreateMasterEditionV3 {
             edition: ownership_nft_master_edition.key(),
@@ -268,7 +287,7 @@ pub struct InitOwnershipNft<'info> {
         seeds = [b"lottery_nft_mint", args.ticket_id.as_ref()],
         bump
     )]
-    pub ownership_nft_mint: InterfaceAccount<'info, Mint>,
+    pub ownership_nft_mint: UncheckedAccount<'info>,
 
     /// CHECK: Metadata account PDA for the Ownership NFT. Checked via CPI.
     #[account(
