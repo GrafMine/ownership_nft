@@ -111,6 +111,7 @@ describe("Initialize Token", () => {
         tokenMetadataProgram: MPL_TOKEN_METADATA_PROGRAM_ID,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
         splTokenProgram: SPL_TOKEN_PROGRAM_ID,
+        instructions: anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY,
       };
       console.log("accounts.tokenMetadataProgram:", accounts.tokenMetadataProgram.toBase58());
 
