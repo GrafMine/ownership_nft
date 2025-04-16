@@ -1,29 +1,18 @@
 #![allow(unexpected_cfgs)]
-use anchor_lang::prelude::*;
-use anchor_lang::solana_program;
+use spl_token_2022::{ extension::{metadata_pointer, ExtensionType, group_pointer}, state::Mint as MintState};
 use anchor_spl::token_2022::{self as token_2022_program, InitializeMint, Token2022};
 use anchor_spl::associated_token::AssociatedToken;
+use solana_program::system_instruction;
+use anchor_lang::solana_program;
 use anchor_spl::token::Token;
-use spl_token::solana_program::program_pack::Pack;
-use spl_token_2022::{
-    ID as SPL_TOKEN_2022_PROGRAM_ID,
-    extension::{metadata_pointer, transfer_hook, ExtensionType},
-    state::Mint as MintState,
-    state::Account as TokenAccount2022,
-    instruction::initialize_account3,
-};
+use anchor_lang::prelude::*;
 use mpl_token_metadata::{
-    types::{Creator, DataV2},
-    instructions::{
-        CreateMetadataAccountV3, CreateMetadataAccountV3InstructionArgs,
-        CreateMasterEditionV3, CreateMasterEditionV3InstructionArgs
-    },
+    types::{Creator, TokenStandard, CollectionDetails},
+    instructions::CreateV1Builder,
     ID as MPL_TOKEN_METADATA_PROGRAM_ID
 };
 use std::fmt::Write;
-use solana_program::system_instruction;
 use hex;
-use std::str::FromStr;
 
 declare_id!("6HJN3E7nkbExcwfw8YkztMFC2vcfPBQwmDLrkEMJqnqM");
 
@@ -106,7 +95,7 @@ pub mod owhership_nft {
         let nft_mint_signer_seeds = &[nft_mint_seeds];
     
         msg!("Calculating size and rent for Ownership NFT Mint...");
-        let extensions = [ExtensionType::MetadataPointer, ExtensionType::TransferHook];
+        let extensions = [ExtensionType::MetadataPointer, ExtensionType::GroupPointer];
         let space = ExtensionType::try_calculate_account_len::<MintState>(&extensions)?;
         let lamports = Rent::get()?.minimum_balance(space);
 
@@ -144,25 +133,21 @@ pub mod owhership_nft {
             ],
             nft_mint_signer_seeds,
         )?;
-    
-        let maybe_nft_hook_id: Option<Pubkey> = Some(OWNERSHIP_NFT_TRANSFER_HOOK_PROGRAM_ID);
-        if let Some(hook_program_id) = maybe_nft_hook_id {
-             msg!("Initializing Transfer Hook for Ownership NFT...");
-             let init_nft_hook_ix = transfer_hook::instruction::initialize(
-                &token_program.key(),
-                &ownership_nft_mint.key(),
-                Some(admin.key()),
-                Some(hook_program_id)
-            )?;
-            anchor_lang::solana_program::program::invoke_signed(
-                &init_nft_hook_ix,
-                &[
-                    ownership_nft_mint.to_account_info(),
-                    admin.to_account_info(),
-                ],
-                nft_mint_signer_seeds,
-            )?;
-        }
+
+        let init_group_ptr_ix = group_pointer::instruction::initialize(
+            &token_program.key(),
+            &ownership_nft_mint.key(),
+            Some(admin.key()),
+            Some(ownership_nft_mint.key())
+        )?;
+        anchor_lang::solana_program::program::invoke_signed(
+            &init_group_ptr_ix,
+            &[
+                ownership_nft_mint.to_account_info(),
+                admin.to_account_info(),
+            ],
+            nft_mint_signer_seeds,
+        )?;
     
         msg!("Initializing Ownership NFT Mint data (decimals, authorities)...");
         let init_mint_nft_accounts = InitializeMint {
@@ -203,78 +188,57 @@ pub mod owhership_nft {
             Creator { address: admin.key(), verified: true, share: 100 },
         ];
     
-        let data_v2_nft = Box::new(DataV2 {
-            name: ownership_token_name.clone(),
-            symbol: ownership_nft_symbol.clone(),
-            uri: ownership_token_uri.clone(),
-            seller_fee_basis_points: 0,
-            creators: Some(nft_creators),
-            collection: None,
-            uses: None,
-        });
-    
-        let nft_mint_key = ownership_nft_mint.key();
-        let create_nft_metadata_accounts = CreateMetadataAccountV3 {
-            metadata: ownership_nft_metadata.key(),
-            mint: nft_mint_key,
-            mint_authority: admin.key(),
-            payer: payer.key(),
-            update_authority: (update_authority.key(), true),
-            system_program: system_program.key(),
-            rent: Some(rent.key()),
-        };
-        let create_nft_metadata_args = Box::new(CreateMetadataAccountV3InstructionArgs {
-            data: *data_v2_nft,
-            is_mutable: true,
-            collection_details: None,
-        });
-    
+        let mut create_v1_builder = CreateV1Builder::new();
+        create_v1_builder
+            .metadata(ownership_nft_metadata.key())
+            .master_edition(Some(ownership_nft_master_edition.key()))
+            .mint(ownership_nft_mint.key(), false)
+            .authority(admin.key())
+            .payer(payer.key())
+            .update_authority(update_authority.key(), true)
+            .system_program(system_program.key())
+            .sysvar_instructions(solana_program::sysvar::instructions::ID)
+            .spl_token_program(Some(ctx.accounts.spl_token_program.key()))
+            .name(ownership_token_name.clone())
+            .symbol(ownership_nft_symbol.clone())
+            .uri(ownership_token_uri.clone())
+            .seller_fee_basis_points(0)
+            .creators(nft_creators)
+            .primary_sale_happened(false)
+            .is_mutable(true)
+            .token_standard(TokenStandard::NonFungible)
+            .collection_details(CollectionDetails::V1 { size: 0 })
+            .decimals(0);
+        let create_v1_ix = create_v1_builder.instruction();
+
         anchor_lang::solana_program::program::invoke_signed(
-            &create_nft_metadata_accounts.instruction(*create_nft_metadata_args),
+            &create_v1_ix,
             &[
                 ownership_nft_metadata.to_account_info(),
-                ownership_nft_mint.to_account_info(),
-                admin.to_account_info(),
-                payer.to_account_info(),
-                update_authority.to_account_info(),
-                system_program.to_account_info(),
-                rent.to_account_info(),
-                token_metadata_program.to_account_info(),
-            ],
-            &[]
-        )?;
-    
-        msg!("Creating Master Edition for Ownership NFT...");
-        let create_master_edition_accounts = CreateMasterEditionV3 {
-            edition: ownership_nft_master_edition.key(),
-            mint: nft_mint_key,
-            update_authority: update_authority.key(),
-            mint_authority: admin.key(),
-            payer: payer.key(),
-            metadata: ownership_nft_metadata.key(),
-            token_program: SPL_TOKEN_2022_PROGRAM_ID,
-            system_program: system_program.key(),
-            rent: Some(rent.key()),
-        };
-        let create_master_edition_args = Box::new(CreateMasterEditionV3InstructionArgs {
-            max_supply: Some(0),
-        });
-    
-        anchor_lang::solana_program::program::invoke_signed(
-            &create_master_edition_accounts.instruction(*create_master_edition_args),
-            &[
                 ownership_nft_master_edition.to_account_info(),
                 ownership_nft_mint.to_account_info(),
-                update_authority.to_account_info(),
                 admin.to_account_info(),
                 payer.to_account_info(),
-                ownership_nft_metadata.to_account_info(),
-                ctx.accounts.spl_token_program.to_account_info(),
+                update_authority.to_account_info(),
                 system_program.to_account_info(),
-                rent.to_account_info(),
+                ctx.accounts.spl_token_program.to_account_info(),
                 token_metadata_program.to_account_info(),
+                ctx.accounts.rent.to_account_info(),
+                ctx.accounts.associated_token_program.to_account_info(),
+                ctx.accounts.token_program.to_account_info(),
+                ctx.accounts.ownership_nft_token_account.to_account_info(),
+                ctx.accounts.ownership_nft_mint.to_account_info(),
+                ctx.accounts.ownership_nft_metadata.to_account_info(),
+                ctx.accounts.ownership_nft_master_edition.to_account_info(),
+                ctx.accounts.update_authority.to_account_info(),
+                ctx.accounts.admin.to_account_info(),
+                ctx.accounts.payer.to_account_info(),
+                ctx.accounts.system_program.to_account_info(),
+                ctx.accounts.rent.to_account_info(),
+                ctx.accounts.token_metadata_program.to_account_info(),
+                ctx.accounts.spl_token_program.to_account_info(),
             ],
-            &[]
+            &[],
         )?;
     
         Ok(())
