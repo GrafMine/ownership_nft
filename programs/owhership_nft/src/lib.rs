@@ -18,6 +18,7 @@ use mpl_token_metadata::{
         CreateMetadataAccountV3, CreateMetadataAccountV3InstructionArgs,
         CreateMasterEditionV3, CreateMasterEditionV3InstructionArgs
     },
+    ID as MPL_TOKEN_METADATA_PROGRAM_ID
 };
 use std::fmt::Write;
 use solana_program::system_instruction;
@@ -41,20 +42,14 @@ pub const BASE_METADATA_URL: &str = "http://localhost:3000";
 
 #[constant]
 pub static ADMIN_TICKET_VALIDATOR: Pubkey = Pubkey::new_from_array([
-    4, 39, 223, 14, 128, 239, 22, 144, 25, 112, 69, 19, 41, 48, 247, 11,
-    53, 182, 229, 43, 22, 173, 113, 196, 26, 56, 163, 140, 136, 96, 54, 144
+    196,49,119,241,84,72,174,21,39,203,148,43,111,97,189,117,219,157,187,242,107,205,96,30,175,144,175,16,189,127,73,85
 ]);
+
 #[constant]
 pub const OWNERSHIP_NFT_TRANSFER_HOOK_PROGRAM_ID: Pubkey = Pubkey::new_from_array([1, 2, 3, 4, 5, 130, 19, 173, 21, 58, 108, 43, 179, 33, 211, 237, 222, 201, 145, 188, 175, 181, 142, 126, 0, 68, 162, 19, 143, 142, 77, 119]);
 
 #[constant]
 pub const OWNERSHIP_NFT_SYMBOL: &str = "OWNER-TEST-NFT";
-
-#[constant]
-pub const TOKEN_METADATA_PROGRAM_ID: Pubkey = Pubkey::new_from_array([
-    77, 101, 116, 97, 113, 98, 120, 120, 85, 101, 114, 100, 113, 50, 56, 99,
-    106, 49, 82, 98, 65, 87, 107, 89, 81, 109, 51, 121, 98, 122, 106, 98,
-]);
 
 #[program]
 pub mod owhership_nft {
@@ -87,8 +82,8 @@ pub mod owhership_nft {
         msg!("ticketIdBytes (hex): {}", hex::encode(ticket_id_bytes));
         msg!("ownershipNftMintPda: {}", ownership_nft_mint.key());
         let expected_metadata_pda = Pubkey::find_program_address(
-            &[b"metadata", TOKEN_METADATA_PROGRAM_ID.as_ref(), ownership_nft_mint.key().as_ref()],
-            &TOKEN_METADATA_PROGRAM_ID
+            &[b"metadata", MPL_TOKEN_METADATA_PROGRAM_ID.as_ref(), ownership_nft_mint.key().as_ref()],
+            &MPL_TOKEN_METADATA_PROGRAM_ID
         ).0;
         msg!("ownershipNftMetadataPda (calculated): {}", expected_metadata_pda);
         msg!("ownershipNftMetadataPda (from ctx): {}", ownership_nft_metadata.key());
@@ -347,8 +342,8 @@ pub struct InitOwnershipNft<'info> {
 
     /// Admin signer with authority for mint & metadata update
     #[account(
-        signer
-        // constraint = admin.key() == ADMIN_TICKET_VALIDATOR @ ErrorCode::InvalidServerSigner
+        signer,
+        constraint = admin.key() == ADMIN_TICKET_VALIDATOR @ ErrorCode::InvalidServerSigner
     )]
     pub admin: Signer<'info>,
 
@@ -367,7 +362,7 @@ pub struct InitOwnershipNft<'info> {
 
     /// CHECK: CPI call
     #[account(
-        address = TOKEN_METADATA_PROGRAM_ID @ ErrorCode::InvalidProgram
+        address = MPL_TOKEN_METADATA_PROGRAM_ID @ ErrorCode::InvalidProgram
     )]
     pub token_metadata_program: AccountInfo<'info>,
 

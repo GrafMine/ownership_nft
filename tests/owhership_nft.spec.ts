@@ -24,6 +24,7 @@ process.env.ANCHOR_PROVIDER_LOGS = "true";
 
 describe("Initialize Token", () => {
 
+  
   const secret = Uint8Array.from(
     [206,241,118,125,82,225,7,5,234,9,67,209,37,100,26,183,190,244,124,81,227,190,190,180,237,2,24,70,14,131,36,186,196,49,119,241,84,72,174,21,39,203,148,43,111,97,189,117,219,157,187,242,107,205,96,30,175,144,175,16,189,127,73,85]
   );
@@ -91,6 +92,7 @@ describe("Initialize Token", () => {
     console.log("ADMIN_KEYPAIR pubkey:", ADMIN_KEYPAIR.publicKey.toBase58());
   
 
+    
     try {
       // --- CREATE ACCOUNTS OBJECT ---
       const accounts = {
