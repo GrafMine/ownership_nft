@@ -181,42 +181,18 @@ pub mod owhership_nft {
             Some(&admin.key()),
         )?;
     
-        let ata_space = TokenAccount2022::LEN;
-        let ata_lamports = Rent::get()?.minimum_balance(ata_space);
-        msg!("Creating Ownership NFT ATA via system_instruction::create_account...");
-        let create_ata_ix = system_instruction::create_account(
-            &payer.key(),
-            &ownership_nft_token_account.key(),
-            ata_lamports,
-            ata_space as u64,
-            &token_program.key(),
-        );
-        anchor_lang::solana_program::program::invoke(
-            &create_ata_ix,
-            &[
-                payer.to_account_info(),
-                ownership_nft_token_account.to_account_info(),
-                system_program.to_account_info(),
-            ],
-        )?;
-        msg!("ATA account created, now initializing as token account...");
-        let init_ata_ix = initialize_account3(
-            &token_program.key(),
-            &ownership_nft_token_account.key(),
-            &ownership_nft_mint.key(),
-            &payer.key(),
-        )?;
-        anchor_lang::solana_program::program::invoke(
-            &init_ata_ix,
-            &[
-                ownership_nft_token_account.to_account_info(),
-                ownership_nft_mint.to_account_info(),
-                payer.to_account_info(),
-                token_program.to_account_info(),
-                rent.to_account_info(),
-            ],
-        )?;
-        msg!("Ownership NFT ATA created and initialized manually.");
+        msg!("Creating Ownership NFT ATA via anchor_spl::associated_token::create (Token-2022)...");
+        let cpi_accounts = anchor_spl::associated_token::Create {
+            payer: payer.to_account_info(),
+            associated_token: ownership_nft_token_account.to_account_info(),
+            authority: payer.to_account_info(),
+            mint: ownership_nft_mint.to_account_info(),
+            system_program: system_program.to_account_info(),
+            token_program: token_program.to_account_info(), // Token-2022!
+        };
+        let cpi_ctx = CpiContext::new(ctx.accounts.associated_token_program.to_account_info(), cpi_accounts);
+        anchor_spl::associated_token::create(cpi_ctx)?;
+        msg!("Ownership NFT ATA created via associated_token::create.");
     
         msg!("Creating Metaplex Metadata for Ownership NFT...");
         let ownership_nft_symbol = OWNERSHIP_NFT_SYMBOL.to_string();
