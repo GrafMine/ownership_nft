@@ -44,11 +44,6 @@ pub const OWNERSHIP_NFT_SYMBOL: &str = "OWNER-TEST-NFT";
 pub mod owhership_nft {
     use super::*;
 
-    pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
-        msg!("Greetings from: {:?}", ctx.program_id);
-        Ok(())
-    }
-
     pub fn init_ownership_nft(
         ctx: Context<InitOwnershipNft>,
         args: InitLotteryTokenArgs,
@@ -86,7 +81,7 @@ pub mod owhership_nft {
         let nft_mint_bump_bytes = [nft_mint_bump];
         let nft_mint_seeds = &[b"lottery_nft_mint".as_ref(), ticket_id_bytes, &nft_mint_bump_bytes[..]][..];
         let nft_mint_signer_seeds = &[nft_mint_seeds];
-    
+        msg!("[init_ownership_nft]:2");
         create_ownership_nft_mint_account(
             payer,
             ownership_nft_mint,
@@ -94,7 +89,7 @@ pub mod owhership_nft {
             token_program,
             nft_mint_signer_seeds,
         )?;
-        
+        msg!("[init_ownership_nft]:3");
         initialize_metadata_and_group_pointer(
             token_program,
             ownership_nft_mint,
@@ -102,7 +97,7 @@ pub mod owhership_nft {
             ownership_nft_metadata,
             nft_mint_signer_seeds,
         )?;
-        
+        msg!("[init_ownership_nft]:4");
         initialize_ownership_nft_mint_data(
             token_program,
             ownership_nft_mint,
@@ -110,7 +105,7 @@ pub mod owhership_nft {
             admin,
             nft_mint_signer_seeds,
         )?;
-        
+        msg!("[init_ownership_nft]:5");
         create_ownership_nft_ata(
             payer,
             ownership_nft_token_account,
@@ -119,11 +114,13 @@ pub mod owhership_nft {
             token_program,
             &ctx.accounts.associated_token_program,
         )?;
+        msg!("[init_ownership_nft]:6");
         
         let ownership_nft_symbol = OWNERSHIP_NFT_SYMBOL.to_string();
         let ownership_token_name = generate_lottery_token_name(&args.ticket_id);
         let ownership_token_uri = generate_lottery_metadata_uri(&args.ticket_id);
         
+        msg!("[init_ownership_nft]:7");
         let create_v1_ix = build_create_v1_instruction(
             ownership_nft_metadata.key(),
             ownership_nft_master_edition.key(),
@@ -138,6 +135,7 @@ pub mod owhership_nft {
             ownership_nft_symbol,
             ownership_token_uri,
         );
+        msg!("[init_ownership_nft]:8");
         anchor_lang::solana_program::program::invoke_signed(
             &create_v1_ix,
             &[
@@ -168,6 +166,7 @@ pub mod owhership_nft {
             ],
             &[],
         )?;
+        msg!("[init_ownership_nft]:9");
         Ok(())
     }
 }
@@ -247,10 +246,6 @@ pub struct InitOwnershipNft<'info> {
     pub instructions: AccountInfo<'info>,
 }
 
-
-#[derive(Accounts)]
-pub struct Initialize {}
-
 fn generate_lottery_metadata_uri(
     ticket_id_bytes: &[u8; 16]
 ) -> String {
@@ -317,12 +312,14 @@ fn initialize_metadata_and_group_pointer<'info>(
     ownership_nft_metadata: &UncheckedAccount<'info>,
     nft_mint_signer_seeds: &[&[&[u8]]],
 ) -> Result<()> {
+    msg!("[initialize_metadata_and_group_pointer]:0");
     let init_nft_meta_ptr_ix = metadata_pointer::instruction::initialize(
         &token_program.key(),
         &ownership_nft_mint.key(),
         Some(admin.key()),
         Some(ownership_nft_metadata.key())
     )?;
+    msg!("[initialize_metadata_and_group_pointer]:1");
     anchor_lang::solana_program::program::invoke_signed(
         &init_nft_meta_ptr_ix,
         &[
@@ -331,12 +328,14 @@ fn initialize_metadata_and_group_pointer<'info>(
         ],
         nft_mint_signer_seeds,
     )?;
+    msg!("[initialize_metadata_and_group_pointer]:2");
     let init_group_ptr_ix = group_pointer::instruction::initialize(
         &token_program.key(),
         &ownership_nft_mint.key(),
         Some(admin.key()),
         Some(ownership_nft_mint.key())
     )?;
+    msg!("[initialize_metadata_and_group_pointer]:3");
     anchor_lang::solana_program::program::invoke_signed(
         &init_group_ptr_ix,
         &[
@@ -345,6 +344,7 @@ fn initialize_metadata_and_group_pointer<'info>(
         ],
         nft_mint_signer_seeds,
     )?;
+    msg!("[initialize_metadata_and_group_pointer]:4");
     Ok(())
 }
 
@@ -355,6 +355,7 @@ fn initialize_ownership_nft_mint_data<'info>(
     admin: &Signer<'info>,
     nft_mint_signer_seeds: &[&[&[u8]]],
 ) -> Result<()> {
+    msg!("[initialize_ownership_nft_mint_data]:0");
     let init_mint_nft_accounts = InitializeMint {
         mint: ownership_nft_mint.to_account_info(),
         rent: rent.to_account_info(),
@@ -364,12 +365,14 @@ fn initialize_ownership_nft_mint_data<'info>(
         init_mint_nft_accounts,
         nft_mint_signer_seeds,
     );
+    msg!("[initialize_ownership_nft_mint_data]:1");
     token_2022_program::initialize_mint(
         init_mint_nft_ctx,
         0,
         &admin.key(),
         Some(&admin.key()),
     )?;
+    msg!("[initialize_ownership_nft_mint_data]:2");
     Ok(())
 }
 
@@ -381,6 +384,7 @@ fn create_ownership_nft_ata<'info>(
     token_program: &Program<'info, Token2022>,
     associated_token_program: &Program<'info, AssociatedToken>,
 ) -> Result<()> {
+    msg!("[create_ownership_nft_ata]:0");
     let cpi_accounts = anchor_spl::associated_token::Create {
         payer: payer.to_account_info(),
         associated_token: ownership_nft_token_account.to_account_info(),
@@ -391,6 +395,7 @@ fn create_ownership_nft_ata<'info>(
     };
     let cpi_ctx = CpiContext::new(associated_token_program.to_account_info(), cpi_accounts);
     anchor_spl::associated_token::create(cpi_ctx)?;
+    msg!("[create_ownership_nft_ata]:1");
     Ok(())
 }
 
@@ -408,6 +413,7 @@ fn build_create_v1_instruction(
     symbol: String,
     uri: String,
 ) -> solana_program::instruction::Instruction {
+    msg!("[build_create_v1_instruction]:0");
     let nft_creators = vec![
         Creator { address: admin, verified: true, share: 100 },
     ];
@@ -432,5 +438,6 @@ fn build_create_v1_instruction(
         .token_standard(TokenStandard::NonFungible)
         .collection_details(CollectionDetails::V1 { size: 0 })
         .decimals(0);
+    msg!("[build_create_v1_instruction]:1");
     create_v1_builder.instruction()
 }
