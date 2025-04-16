@@ -52,7 +52,6 @@ pub mod owhership_nft {
         let admin = &ctx.accounts.admin;
         let update_authority = &ctx.accounts.update_authority;
         let token_program = &ctx.accounts.token_program;
-        let token_metadata_program = &ctx.accounts.token_metadata_program;
         let system_program = &ctx.accounts.system_program;
         let rent = &ctx.accounts.rent;
         let ownership_nft_mint = &ctx.accounts.ownership_nft_mint;
@@ -146,23 +145,8 @@ pub mod owhership_nft {
                 payer.to_account_info(),
                 update_authority.to_account_info(),
                 system_program.to_account_info(),
-                ctx.accounts.spl_token_program.to_account_info(),
-                token_metadata_program.to_account_info(),
-                ctx.accounts.rent.to_account_info(),
-                ctx.accounts.associated_token_program.to_account_info(),
-                ctx.accounts.token_program.to_account_info(),
-                ctx.accounts.ownership_nft_token_account.to_account_info(),
-                ctx.accounts.ownership_nft_mint.to_account_info(),
-                ctx.accounts.ownership_nft_metadata.to_account_info(),
-                ctx.accounts.ownership_nft_master_edition.to_account_info(),
-                ctx.accounts.update_authority.to_account_info(),
-                ctx.accounts.admin.to_account_info(),
-                ctx.accounts.payer.to_account_info(),
-                ctx.accounts.system_program.to_account_info(),
-                ctx.accounts.rent.to_account_info(),
-                ctx.accounts.token_metadata_program.to_account_info(),
-                ctx.accounts.spl_token_program.to_account_info(),
                 ctx.accounts.instructions.to_account_info(),
+                ctx.accounts.spl_token_program.to_account_info(),
             ],
             &[],
         )?;
