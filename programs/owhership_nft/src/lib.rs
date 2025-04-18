@@ -1,18 +1,12 @@
 #![allow(unexpected_cfgs)]
-use spl_token_2022::{ extension::{metadata_pointer, ExtensionType, group_pointer}, state::Mint as MintState};
+use spl_token_2022::{ extension::{metadata_pointer, group_pointer, ExtensionType}, state::Mint as MintState};
 use anchor_spl::token_2022::{self as token_2022_program, InitializeMint, Token2022};
+use spl_token_metadata_interface::instruction as token_metadata_instruction;
 use anchor_spl::associated_token::AssociatedToken;
 use solana_program::system_instruction;
 use anchor_lang::solana_program;
-use anchor_spl::token::Token;
 use anchor_lang::prelude::*;
-use mpl_token_metadata::{
-    types::{Creator, TokenStandard, PrintSupply},
-    ID as MPL_TOKEN_METADATA_PROGRAM_ID
-};
 use std::fmt::Write;
-use hex;
-use mpl_token_metadata::instructions::CreateV1CpiBuilder;
 
 declare_id!("6HJN3E7nkbExcwfw8YkztMFC2vcfPBQwmDLrkEMJqnqM");
 
@@ -50,15 +44,12 @@ pub mod owhership_nft {
     ) -> Result<()> {
         let payer = &ctx.accounts.payer;
         let admin = &ctx.accounts.admin;
-        let update_authority = &ctx.accounts.update_authority;
         let token_program = &ctx.accounts.token_program;
         let system_program = &ctx.accounts.system_program;
         let rent = &ctx.accounts.rent;
         let ownership_nft_mint = &ctx.accounts.ownership_nft_mint;
-        let ownership_nft_metadata = &ctx.accounts.ownership_nft_metadata;
-        let ownership_nft_master_edition = &ctx.accounts.ownership_nft_master_edition;
         let ownership_nft_token_account = &ctx.accounts.ownership_nft_token_account;
-    
+
         let ticket_id_bytes = args.ticket_id.as_ref();
 
         let (expected_nft_mint_pda, nft_mint_bump) = Pubkey::find_program_address(
@@ -66,30 +57,22 @@ pub mod owhership_nft {
             ctx.program_id
         );
         require_keys_eq!(ownership_nft_mint.key(), expected_nft_mint_pda, ErrorCode::InvalidProgram);
-        
         let nft_mint_bump_bytes = [nft_mint_bump];
         let nft_mint_seeds = &[b"lottery_nft_mint".as_ref(), ticket_id_bytes, &nft_mint_bump_bytes[..]][..];
         let nft_mint_signer_seeds = &[nft_mint_seeds];
-        
-        // Создаем mint аккаунт
-        create_ownership_nft_mint_account(
+
+        // Создаём mint с расширениями MetadataPointer и GroupPointer
+        create_ownership_nft_mint_account_with_extensions(
             payer,
             ownership_nft_mint,
+            &ctx.accounts.ownership_nft_metadata,
+            admin,
             system_program,
             token_program,
             nft_mint_signer_seeds,
         )?;
-        
-        // Инициализируем указатели метаданных и группы
-        initialize_metadata_and_group_pointer(
-            token_program,
-            ownership_nft_mint,
-            admin,
-            ownership_nft_metadata,
-            nft_mint_signer_seeds,
-        )?;
-        
-        // Инициализируем данные mint 
+
+        // Инициализируем mint
         initialize_ownership_nft_mint_data(
             token_program,
             ownership_nft_mint,
@@ -97,8 +80,8 @@ pub mod owhership_nft {
             admin,
             nft_mint_signer_seeds,
         )?;
-        
-        // Создаем ассоциированный токен аккаунт 
+
+        // Создаём ATA
         create_ownership_nft_ata(
             payer,
             ownership_nft_token_account,
@@ -107,7 +90,15 @@ pub mod owhership_nft {
             token_program,
             &ctx.accounts.associated_token_program,
         )?;
-        
+
+        // Инициализация метаданных через SPL Token Metadata Interface
+        initialize_token2022_metadata(
+            ctx.accounts,
+            &args.ticket_id,
+            nft_mint_signer_seeds,
+        )?;
+
+        // Mint 1 токен
         let mint_to_ctx = CpiContext::new_with_signer(
             ctx.accounts.token_program.to_account_info(),
             anchor_spl::token_2022::MintTo {
@@ -118,102 +109,8 @@ pub mod owhership_nft {
             nft_mint_signer_seeds,
         );
         anchor_spl::token_2022::mint_to(mint_to_ctx, 1)?;
-        
-        let ownership_nft_symbol = OWNERSHIP_NFT_SYMBOL.to_string();
-        let ownership_token_name = generate_lottery_token_name(&args.ticket_id);
-        let ownership_token_uri = generate_lottery_metadata_uri(&args.ticket_id);
-        
-          // Ожидаемые PDA для metadata и master_edition
-          let (expected_metadata_pda, _) = Pubkey::find_program_address(
-            &[
-                b"metadata",
-                &MPL_TOKEN_METADATA_PROGRAM_ID.to_bytes(),
-                &ownership_nft_mint.key().to_bytes(),
-            ],
-            &MPL_TOKEN_METADATA_PROGRAM_ID,
-        );
-        let (expected_master_edition_pda, _) = Pubkey::find_program_address(
-            &[
-                b"metadata",
-                &MPL_TOKEN_METADATA_PROGRAM_ID.to_bytes(),
-                &ownership_nft_mint.key().to_bytes(),
-                b"edition",
-            ],
-            &MPL_TOKEN_METADATA_PROGRAM_ID,
-        );
 
-        // Добавляем подробные логи для диагностики
-        msg!("=== DEBUG: ACCOUNT ADDRESSES ===\n\
-             metadata_address: {}\n\
-             master_edition_address: {}\n\
-             mint_address: {}\n\
-             authority_address (admin): {}\n\
-             payer_address: {}\n\
-             update_authority_address: {}\n\
-             system_program_address: {}\n\
-             instructions_sysvar_address: {}\n\
-             spl_token_program_address: {}\n\
-             token_metadata_program_address: {}\n\
-             token_uri: {}\n\
-             expected_metadata_pda: {}\n\
-             expected_master_edition_pda: {}\n\
-             actual_metadata_pda: {}\n\
-             actual_master_edition_pda: {}\n\
-             nft_mint_seeds.len: {}\n\
-             nft_mint_seeds[0].len: {}",
-             ownership_nft_metadata.key(),
-             ownership_nft_master_edition.key(),
-             ownership_nft_mint.key(),
-             admin.key(),
-             payer.key(),
-             update_authority.key(),
-             system_program.key(),
-             ctx.accounts.instructions.key(),
-             ctx.accounts.spl_token_program.key(),
-             ctx.accounts.token_metadata_program.key(),
-             ownership_token_uri,
-             expected_metadata_pda,
-             expected_master_edition_pda,
-             ownership_nft_metadata.key(),
-             ownership_nft_master_edition.key(),
-             nft_mint_seeds.len(),
-             nft_mint_seeds[0].len()
-        );
-        
-        msg!("Using direct instruction instead of CpiBuilder");
-        
-        let creators = vec![
-            Creator { 
-                address: admin.key(), 
-                verified: true, 
-                share: 100 
-            },
-        ];
-        
-        // --- ЗАМЕНА: Используем CreateV1CpiBuilder для корректной работы с Token-2022 ---
-        CreateV1CpiBuilder::new(&ctx.accounts.token_metadata_program)
-            .metadata(&ctx.accounts.ownership_nft_metadata)
-            .master_edition(Some(&ctx.accounts.ownership_nft_master_edition))
-            .mint(&ctx.accounts.ownership_nft_mint, false)
-            .authority(&ctx.accounts.admin)
-            .payer(&ctx.accounts.payer)
-            .update_authority(&ctx.accounts.update_authority, true)
-            .system_program(&ctx.accounts.system_program)
-            .sysvar_instructions(&ctx.accounts.instructions)
-            .spl_token_program(Some(&ctx.accounts.token_program)) // Token-2022!
-            .name(ownership_token_name)
-            .symbol(ownership_nft_symbol)
-            .uri(ownership_token_uri)
-            .creators(creators)
-            .token_standard(TokenStandard::NonFungible)
-            .print_supply(PrintSupply::Limited(0))
-            .seller_fee_basis_points(0)
-            .is_mutable(true)
-            .primary_sale_happened(false)
-            .invoke()?;
-        // --- КОНЕЦ ЗАМЕНЫ ---
-        
-        msg!("NFT successfully created!");
+        msg!("NFT успешно создан через Token-2022 без Metaplex!");
         Ok(())
     }
 }
@@ -230,13 +127,9 @@ pub struct InitOwnershipNft<'info> {
     #[account(mut)]
     pub ownership_nft_mint: UncheckedAccount<'info>,
 
-    /// CHECK: Metadata account PDA for the Ownership NFT. Checked via CPI.
+    /// CHECK: Metadata account for the Ownership NFT (SPL Token-2022 Metadata Extension)
     #[account(mut)]
     pub ownership_nft_metadata: UncheckedAccount<'info>,
-
-    /// CHECK: Master Edition account PDA for the Ownership NFT. Checked via CPI.
-    #[account(mut)]
-    pub ownership_nft_master_edition: UncheckedAccount<'info>,
 
     /// CHECK: Associated Token Account for the Payer to receive the Ownership NFT.
     #[account(mut)]
@@ -253,37 +146,17 @@ pub struct InitOwnershipNft<'info> {
     )]
     pub admin: Signer<'info>,
 
-    /// Authority signer specifically for the update_authority field in metadata
-    #[account(
-        signer,
-        constraint = update_authority.key() == admin.key() @ ErrorCode::InvalidServerSigner
-    )]
-    pub update_authority: Signer<'info>,
-
     /// System program
     pub system_program: Program<'info, System>,
 
     /// Token program (Token-2022)
     pub token_program: Program<'info, Token2022>,
 
-    /// CHECK: CPI call
-    #[account(
-        address = MPL_TOKEN_METADATA_PROGRAM_ID @ ErrorCode::InvalidProgram
-    )]
-    pub token_metadata_program: AccountInfo<'info>,
-
     /// Solana Rent program
     pub rent: Sysvar<'info, Rent>,
 
     /// Associated Token program
     pub associated_token_program: Program<'info, AssociatedToken>,
-
-    /// --- ADDED: Standard token program for CPI to Metaplex ---
-    pub spl_token_program: Program<'info, Token>,
-
-    /// CHECK: Sysvar instructions account (обязателен для Metaplex CPI)
-    #[account(address = solana_program::sysvar::instructions::ID)]
-    pub instructions: AccountInfo<'info>,
 }
 
 fn generate_lottery_metadata_uri(
@@ -301,7 +174,7 @@ fn generate_lottery_metadata_uri(
 fn array_to_uuid_string(uuid_bytes: &[u8; 16]) -> String {
     let mut uuid_string = String::with_capacity(36);
     
-    for (i, byte) in uuid_bytes.iter().enumerate() {
+    for byte in uuid_bytes.iter() {
         write!(uuid_string, "{:02x}", byte).unwrap();
     }
     
@@ -312,14 +185,16 @@ fn generate_lottery_token_name(uuid_bytes: &[u8; 16]) -> String {
     array_to_uuid_string(uuid_bytes)
 }
 
-fn create_ownership_nft_mint_account<'info>(
+fn create_ownership_nft_mint_account_with_extensions<'info>(
     payer: &Signer<'info>,
     ownership_nft_mint: &UncheckedAccount<'info>,
+    metadata_account: &UncheckedAccount<'info>,
+    admin: &Signer<'info>,
     system_program: &Program<'info, System>,
     token_program: &Program<'info, Token2022>,
     nft_mint_signer_seeds: &[&[&[u8]]],
 ) -> Result<()> {
-    let extensions = [ExtensionType::MetadataPointer];
+    let extensions = [ExtensionType::MetadataPointer, ExtensionType::GroupPointer];
     let space = ExtensionType::try_calculate_account_len::<MintState>(&extensions)?;
     let lamports = Rent::get()?.minimum_balance(space);
     let create_nft_mint_account_ix = system_instruction::create_account(
@@ -338,21 +213,13 @@ fn create_ownership_nft_mint_account<'info>(
         ],
         nft_mint_signer_seeds,
     )?;
-    Ok(())
-}
-
-fn initialize_metadata_and_group_pointer<'info>(
-    token_program: &Program<'info, Token2022>,
-    ownership_nft_mint: &UncheckedAccount<'info>,
-    admin: &Signer<'info>,
-    ownership_nft_metadata: &UncheckedAccount<'info>,
-    nft_mint_signer_seeds: &[&[&[u8]]],
-) -> Result<()> {
+    
+    // Инициализируем MetadataPointer (метаданные будут указывать на отдельный аккаунт)
     let init_nft_meta_ptr_ix = metadata_pointer::instruction::initialize(
         &token_program.key(),
         &ownership_nft_mint.key(),
-        None,// Some(admin.key()),
-        Some(ownership_nft_metadata.key())
+        None,
+        Some(metadata_account.key())
     )?;
     anchor_lang::solana_program::program::invoke_signed(
         &init_nft_meta_ptr_ix,
@@ -362,21 +229,23 @@ fn initialize_metadata_and_group_pointer<'info>(
         ],
         nft_mint_signer_seeds,
     )?;
-
-    // let init_group_ptr_ix = group_pointer::instruction::initialize(
-    //     &token_program.key(),
-    //     &ownership_nft_mint.key(),
-    //     Some(admin.key()),
-    //     Some(ownership_nft_mint.key())
-    // )?;
-    // anchor_lang::solana_program::program::invoke_signed(
-    //     &init_group_ptr_ix,
-    //     &[
-    //         ownership_nft_mint.to_account_info(),
-    //         admin.to_account_info(),
-    //     ],
-    //     nft_mint_signer_seeds,
-    // )?;
+    
+    // Инициализируем GroupPointer (указывает на себя — self-reference)
+    let init_group_ptr_ix = group_pointer::instruction::initialize(
+        &token_program.key(),
+        &ownership_nft_mint.key(),
+        Some(admin.key()),
+        Some(ownership_nft_mint.key())
+    )?;
+    anchor_lang::solana_program::program::invoke_signed(
+        &init_group_ptr_ix,
+        &[
+            ownership_nft_mint.to_account_info(),
+            admin.to_account_info(),
+        ],
+        nft_mint_signer_seeds,
+    )?;
+    
     Ok(())
 }
 
@@ -423,6 +292,65 @@ fn create_ownership_nft_ata<'info>(
     };
     let cpi_ctx = CpiContext::new(associated_token_program.to_account_info(), cpi_accounts);
     anchor_spl::associated_token::create(cpi_ctx)?;
+    Ok(())
+}
+
+// Отдельная функция для инициализации метаданных через SPL Token-2022 Metadata Extension
+fn initialize_token2022_metadata(
+    accounts: &InitOwnershipNft<'_>,
+    ticket_id: &[u8; 16],
+    signer_seeds: &[&[&[u8]]],
+) -> Result<()> {
+    // Генерируем данные для метаданных здесь
+    let symbol = OWNERSHIP_NFT_SYMBOL.to_string();
+    let name = generate_lottery_token_name(ticket_id);
+    let uri = generate_lottery_metadata_uri(ticket_id);
+
+    // По документации SPL Token Metadata Interface:
+    // - Для создания инструкции инициализации метаданных требуется:
+    // - Метаданные (сам аккаунт, где будут храниться метаданные)
+    // - Mint (аккаунт mint, для которого создаются метаданные)
+    // - Update Authority (обычно admin, который должен подписывать транзакцию)
+    // - Payer (тот, кто оплачивает создание)
+    let metadata_account = &accounts.ownership_nft_metadata;
+    let mint = &accounts.ownership_nft_mint;
+    let update_authority = &accounts.admin; // The admin is the update authority
+    let payer = &accounts.payer; // The payer is the one funding the transaction
+
+    // Вызываем функцию initialize с правильными аргументами согласно документации
+    // Сигнатура из spl-token-metadata-interface/src/instruction.rs:
+    // pub fn initialize(...) -> Instruction { ... }
+    // Аргументы: program_id, metadata, update_authority, mint, mint_authority, name, symbol, uri
+    let init_metadata_ix = token_metadata_instruction::initialize(
+        &token_2022_program::ID,   // program_id: ID программы Token-2022
+        &metadata_account.key(),   // metadata: адрес аккаунта метаданных
+        &update_authority.key(),   // update_authority: кто может изменять метаданные (admin)
+        &mint.key(),               // mint: адрес mint
+        &update_authority.key(),   // mint_authority: кто может минтить (admin)
+        name,                      // name: имя токена
+        symbol,                    // symbol: символ токена
+        uri,                       // uri: URI метаданных
+    );
+
+    // Вызываем инструкцию с необходимыми аккаунтами
+    // Payer подписывает т.к. он платит за транзакцию, update_authority - т.к. он авторизует создание/изменение
+    // Аккаунты, которые требуются для инструкции initialize:
+    // 0. `[writable]` Metadata account
+    // 1. `[signer]` Update authority
+    // 2. `[]` Mint account
+    // 3. `[signer]` Payer
+    anchor_lang::solana_program::program::invoke_signed(
+        &init_metadata_ix,
+        &[
+            metadata_account.to_account_info(), // 0. Metadata account
+            update_authority.to_account_info(), // 1. Update authority (signer)
+            mint.to_account_info(),             // 2. Mint account
+            payer.to_account_info(),            // 3. Payer (signer)
+        ],
+        signer_seeds, // Используем PDA seeds для подписи от имени mint
+    )?;
+
+    msg!("Метаданные успешно инициализированы через SPL Token Metadata Interface");
     Ok(())
 }
 

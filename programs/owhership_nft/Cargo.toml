@@ -19,13 +19,7 @@ idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 [dependencies]
 anchor-lang = { version = "0.31.0", features = ["init-if-needed"]}
 anchor-spl = { version = "0.31.0", features = ["token", "token_2022", "metadata"] }
-spl-token = { version = "=8.0.0", features = ["no-entrypoint"] }
 spl-token-2022 = { version = "8.0.1", features = ["no-entrypoint"] }
-mpl-token-metadata = { version = "=5.1.0" }
+spl-token-metadata-interface = { version = "0.7.0" }
 spl-associated-token-account = { version = "6.0.0", features = ["no-entrypoint"] }
 hex = "0.4"
-
-[program-dependencies]
-metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s = { address = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s" }
-TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb = { address = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb" }
-ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL = { address = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL" }

@@ -1,14 +1,13 @@
 // import { MPL_TOKEN_METADATA_PROGRAM_ID as MPL_ID_STR } from "@metaplex-foundation/mpl-token-metadata";
 
-import { TOKEN_PROGRAM_ID as SPL_TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { Keypair, SystemProgram, PublicKey, ComputeBudgetProgram } from "@solana/web3.js";
-import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { OwhershipNft } from "../target/types/owhership_nft";
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { v4 as uuidv4 } from 'uuid';
 import { parse } from 'uuid-parse';
 import {
+  getAssociatedTokenAddressSync,
   TOKEN_2022_PROGRAM_ID,
   ExtensionType,
   getMintLen,
@@ -16,9 +15,6 @@ import {
 } from "@solana/spl-token";
 
 jest.setTimeout(60000);
-// const MPL_TOKEN_METADATA_PROGRAM_ID = new PublicKey(MPL_ID_STR);
-// export declare const MPL_TOKEN_METADATA_PROGRAM_ID: PublicKey<"metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s">;
-const MPL_TOKEN_METADATA_PROGRAM_ID = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
 
 process.env.ANCHOR_PROVIDER_LOGS = "true";
 
@@ -53,7 +49,7 @@ describe("Initialize Token", () => {
   // Participation Token Accounts (created manually in instruction)
   const participationTokenMintKp = Keypair.generate();
 
-  it("Initializes ownership NFT", async () => {
+  it("Initializes ownership NFT with Token-2022", async () => {
     const ticketIdString = uuidv4();
     const buffer = Buffer.alloc(16);
     parse(ticketIdString, buffer);
@@ -64,82 +60,64 @@ describe("Initialize Token", () => {
       [Buffer.from("lottery_nft_mint"), ticketIdBytes],
       program.programId
     );
-    const [ownershipNftMetadataPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("metadata"), MPL_TOKEN_METADATA_PROGRAM_ID.toBytes(), ownershipNftMintPda.toBytes()],
-      MPL_TOKEN_METADATA_PROGRAM_ID
-    );
-    const [ownershipNftMasterEditionPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("metadata"), MPL_TOKEN_METADATA_PROGRAM_ID.toBytes(), ownershipNftMintPda.toBytes(), Buffer.from("edition")],
-      MPL_TOKEN_METADATA_PROGRAM_ID
-    );
+    
+    // Создаем отдельный аккаунт для метаданных (не PDA)
+    const metadataAccount = Keypair.generate();
+    
     // --- ЯВНЫЙ ВЫВОД ДЛЯ ДЕБАГА ---
     console.log("ticketIdBytes (hex):", Buffer.from(ticketIdBytes).toString("hex"));
     console.log("ownershipNftMintPda:", ownershipNftMintPda.toBase58());
-    console.log("ownershipNftMetadataPda:", ownershipNftMetadataPda.toBase58());
-    console.log("ownershipNftMasterEditionPda:", ownershipNftMasterEditionPda.toBase58());
+    console.log("metadata account:", metadataAccount.publicKey.toBase58());
     // --- конец дебага ---
+    
     const ownershipNftTokenAccount = getAssociatedTokenAddressSync(
       ownershipNftMintPda,      // Mint
       lotteryCreator.publicKey, // Owner
       false,                    // allowOwnerOffCurve - usually false
-      TOKEN_2022_PROGRAM_ID,    // <<< ADDED: Token program ID
-      ASSOCIATED_TOKEN_PROGRAM_ID // <<< ADDED: ATA program ID
+      TOKEN_2022_PROGRAM_ID,    // Token program ID
+      ASSOCIATED_TOKEN_PROGRAM_ID // ATA program ID
     );
+    
     // --- Call Instruction ---
-    console.log("Calling initLotteryToken...");
+    console.log("Calling initOwnershipNft...");
     console.log("Payer (Lottery Creator):", lotteryCreator.publicKey.toBase58());
     console.log("Admin Pubkey:", ADMIN_KEYPAIR.publicKey.toBase58());
     console.log("Ownership NFT Mint PDA:", ownershipNftMintPda.toBase58());
-    console.log("ADMIN_KEYPAIR pubkey:", ADMIN_KEYPAIR.publicKey.toBase58());
   
     // Добавляем подробные диагностические логи для сравнения с контрактом
     console.log("=== TEST EXPECTATION: ACCOUNT ADDRESSES ===");
-    console.log("Expected metadata_address:", ownershipNftMetadataPda.toBase58());
-    console.log("Expected master_edition_address:", ownershipNftMasterEditionPda.toBase58());
+    console.log("Expected metadata_address:", metadataAccount.publicKey.toBase58());
     console.log("Expected mint_address:", ownershipNftMintPda.toBase58());
     console.log("Expected authority_address (admin):", ADMIN_KEYPAIR.publicKey.toBase58());
     console.log("Expected payer_address:", lotteryCreator.publicKey.toBase58());
-    console.log("Expected update_authority_address:", ADMIN_KEYPAIR.publicKey.toBase58());
     console.log("Expected system_program_address:", SystemProgram.programId.toBase58());
-    console.log("Expected instructions_sysvar_address:", anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY.toBase58());
-    console.log("Expected spl_token_program_address:", SPL_TOKEN_PROGRAM_ID.toBase58());
-    console.log("Expected token_metadata_program_address:", MPL_TOKEN_METADATA_PROGRAM_ID.toBase58());
-    
-    // Отображаем как были вычислены метаданные и мастер эдишн
-    console.log("=== TEST EXPECTATION: PDA DERIVATION DETAILS ===");
-    console.log("Metadata PDA seeds:");
-    console.log(" - prefix: metadata");
-    console.log(" - metadata_program_id:", MPL_TOKEN_METADATA_PROGRAM_ID.toBase58());
-    console.log(" - mint_id:", ownershipNftMintPda.toBase58());
-    
-    console.log("Master Edition PDA seeds:");
-    console.log(" - prefix: metadata");
-    console.log(" - metadata_program_id:", MPL_TOKEN_METADATA_PROGRAM_ID.toBase58());
-    console.log(" - mint_id:", ownershipNftMintPda.toBase58());
-    console.log(" - suffix: edition");
-
+    console.log("Expected token_program_address:", TOKEN_2022_PROGRAM_ID.toBase58());
+    console.log("Expected associated_token_program_address:", ASSOCIATED_TOKEN_PROGRAM_ID.toBase58());
     
     try {
+      // Создаем аккаунт для метаданных
+      const createMetadataAccountIx = SystemProgram.createAccount({
+        fromPubkey: lotteryCreator.publicKey,
+        newAccountPubkey: metadataAccount.publicKey,
+        lamports: await provider.connection.getMinimumBalanceForRentExemption(1000), // Выделяем достаточно места для метаданных
+        space: 1000, // Размер для метаданных
+        programId: SystemProgram.programId, // Владелец - system program (будет перенаправлено через метадата-поинтер)
+      });
+      
       // --- CREATE ACCOUNTS OBJECT ---
       const accounts = {
         // Ownership NFT
         ownershipNftMint: ownershipNftMintPda,
-        ownershipNftMetadata: ownershipNftMetadataPda,
-        ownershipNftMasterEdition: ownershipNftMasterEditionPda,
+        ownershipNftMetadata: metadataAccount.publicKey,
         ownershipNftTokenAccount: ownershipNftTokenAccount,
         // Other Accounts
         payer: lotteryCreator.publicKey,
         admin: ADMIN_KEYPAIR.publicKey,
-        updateAuthority: ADMIN_KEYPAIR.publicKey,
         systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_2022_PROGRAM_ID,
         associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-        tokenMetadataProgram: MPL_TOKEN_METADATA_PROGRAM_ID,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-        splTokenProgram: SPL_TOKEN_PROGRAM_ID,
-        instructions: anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY,
       };
-      console.log("accounts.tokenMetadataProgram:", accounts.tokenMetadataProgram.toBase58());
 
       // 2. Participation Token Mint
       const participationExtensions = [ExtensionType.TransferHook, ExtensionType.MetadataPointer];
@@ -164,7 +142,7 @@ describe("Initialize Token", () => {
           .instruction();
       console.log("Main program instruction created.");
 
-      // 4. Assemble the transaction with TWO instructions (Order matters!)
+      // 4. Assemble the transaction with instructions
       const transaction = new anchor.web3.Transaction();
       
       // Увеличиваем лимит вычислительных единиц для транзакции
@@ -173,24 +151,21 @@ describe("Initialize Token", () => {
       });
       transaction.add(modifyComputeUnits);
       
-      transaction.add(createParticipationMintAccountIx); // FIRST, create participation token mint
-      transaction.add(initLotteryTokenInstruction); // THEN, the main instruction
-      console.log("Transaction created with 3 instructions (ComputeBudget + 2 main instructions).");
+      transaction.add(createMetadataAccountIx); // Создаем аккаунт для метаданных
+      transaction.add(createParticipationMintAccountIx); // Создаем participation token mint
+      transaction.add(initLotteryTokenInstruction); // Основная инструкция
+      console.log("Transaction created with 4 instructions (ComputeBudget + 3 main instructions).");
 
       // 5. Set the fee payer and blockhash
       transaction.feePayer = lotteryCreator.publicKey;
       transaction.recentBlockhash = (await provider.connection.getLatestBlockhash()).blockhash;
       console.log(`Fee payer set to ${transaction.feePayer.toBase58()}, Blockhash: ${transaction.recentBlockhash}`);
 
-      // 6. Sign the transaction with the required keys:
-      //    - lotteryCreator (payer) - signed last via provider.wallet
-      //    - ADMIN_KEYPAIR - required by the main instruction
-      //    - participationTokenMintKp - Required for createAccount
-
-      // Sign with "additional" keys
+      // 6. Sign the transaction with the required keys
+      transaction.partialSign(metadataAccount); // Metadata account keypair
       transaction.partialSign(ADMIN_KEYPAIR);
-      transaction.partialSign(participationTokenMintKp); // Required for createAccount
-      console.log("Transaction partially signed by Admin and Participation Mint Kp.");
+      transaction.partialSign(participationTokenMintKp);
+      console.log("Transaction partially signed by Admin, Metadata Account, and Participation Mint Kp.");
 
       // Final signing by the payer's wallet
       const signedTx = await provider.wallet.signTransaction(transaction);
