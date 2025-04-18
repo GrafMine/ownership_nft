@@ -190,41 +190,28 @@ pub mod owhership_nft {
             },
         ];
         
-        let create_metadata_ix = mpl_token_metadata::instructions::CreateV1Builder::new()
-            .metadata(ownership_nft_metadata.key())
-            .master_edition(Some(ownership_nft_master_edition.key()))
-            .mint(ownership_nft_mint.key(), false)
-            .authority(admin.key())
-            .payer(payer.key())
-            .update_authority(update_authority.key(), true)
-            .is_mutable(true)
-            .primary_sale_happened(false)
-            .seller_fee_basis_points(0)
+        // --- ЗАМЕНА: Используем CreateV1CpiBuilder для корректной работы с Token-2022 ---
+        CreateV1CpiBuilder::new(&ctx.accounts.token_metadata_program)
+            .metadata(&ctx.accounts.ownership_nft_metadata)
+            .master_edition(Some(&ctx.accounts.ownership_nft_master_edition))
+            .mint(&ctx.accounts.ownership_nft_mint, false)
+            .authority(&ctx.accounts.admin)
+            .payer(&ctx.accounts.payer)
+            .update_authority(&ctx.accounts.update_authority, true)
+            .system_program(&ctx.accounts.system_program)
+            .sysvar_instructions(&ctx.accounts.instructions)
+            .spl_token_program(Some(&ctx.accounts.token_program)) // Token-2022!
             .name(ownership_token_name)
             .symbol(ownership_nft_symbol)
             .uri(ownership_token_uri)
             .creators(creators)
             .token_standard(TokenStandard::NonFungible)
             .print_supply(PrintSupply::Limited(0))
-            .instruction();
-            
-        msg!("Invoking metadata instruction");
-        solana_program::program::invoke(
-            &create_metadata_ix,
-            &[
-                ownership_nft_metadata.to_account_info(),
-                ownership_nft_master_edition.to_account_info(),
-                ownership_nft_mint.to_account_info(),
-                admin.to_account_info(),
-                payer.to_account_info(),
-                update_authority.to_account_info(),
-                system_program.to_account_info(),
-                ctx.accounts.instructions.to_account_info(),
-                ctx.accounts.spl_token_program.to_account_info(),
-                ctx.accounts.token_metadata_program.to_account_info(),
-                ctx.accounts.rent.to_account_info(),
-            ],
-        )?;
+            .seller_fee_basis_points(0)
+            .is_mutable(true)
+            .primary_sale_happened(false)
+            .invoke()?;
+        // --- КОНЕЦ ЗАМЕНЫ ---
         
         msg!("NFT successfully created!");
         Ok(())
