@@ -5,6 +5,7 @@
     "anchor-deploy:init": "npm run anchor-buffer-delete && npm run anchor-buffer-create && solana program-v4 deploy ./target/deploy/owhership_nft.so --program-keypair ./target/deploy/owhership_nft-keypair.json --buffer ./solana/buffer-owhership_nft-deploy-keypair.json",
     "anchor-buffer-delete": "BUFFER_ADDR=$(solana address -k ./solana/buffer-owhership_nft-deploy-keypair.json 2>/dev/null) && if [ -n \"$BUFFER_ADDR\" ]; then solana program-v4 close $BUFFER_ADDR --authority ./solana/id.json || true; fi && rm -f ./solana/buffer-owhership_nft-deploy-keypair.json",
     "anchor-buffer-create": "solana-keygen new -o ./solana/buffer-owhership_nft-deploy-keypair.json",
+    "anchor-buffer-delete-create": "anchor-buffer-delete && anchor-buffer-create",
     "anchor-deploy:update": "solana program-v4 deploy ./target/deploy/owhership_nft.so --program-id ./target/deploy/owhership_nft-keypair.json --buffer ./solana/buffer-owhership_nft-deploy-keypair.json",
     "anchor-test:init_token": "RUST_LOG=debug anchor test --skip-local-validator --skip-build --skip-deploy ./tests/owhership_nft.spec.ts",
     "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
