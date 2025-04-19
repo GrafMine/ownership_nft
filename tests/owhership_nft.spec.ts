@@ -15,6 +15,7 @@ import {
   getAccount,
   unpackMint,
   getMetadataPointerState,
+  getGroupPointerState,
 } from "@solana/spl-token";
 import { BN } from "bn.js";
 
@@ -67,7 +68,7 @@ describe("Initialize Ownership NFT", () => {
     console.log("Ownership NFT Mint PDA:", ownershipNftMintPda.toBase58());
 
     // 2. Рассчитываем PDA для аккаунта Метаданных (принадлежит нашей программе)
-    const [metadataPda] = PublicKey.findProgramAddressSync(
+    const [metadataPda, metadataBump] = PublicKey.findProgramAddressSync(
       [Buffer.from("metadata"), ownershipNftMintPda.toBuffer()], // seeds: "metadata" + mint PDA key
       program.programId
     );
@@ -208,7 +209,15 @@ describe("Initialize Ownership NFT", () => {
     const pointerState = getMetadataPointerState(mintData);
     expect(pointerState).not.toBeNull();
     expect(pointerState!.metadataAddress?.equals(metadataPda)).toBe(true); // Проверяем, что указатель ссылается на наш PDA метаданных
+    expect(pointerState!.authority?.equals(ADMIN_KEYPAIR.publicKey)).toBe(true); // Проверка authority
     console.log("MetadataPointer extension verified on mint.");
+
+    // Проверка расширения GroupPointer
+    const groupPointerState = getGroupPointerState(mintData);
+    expect(groupPointerState).not.toBeNull();
+    expect(groupPointerState!.groupAddress?.equals(ownershipNftMintPda)).toBe(true); // Указывает на себя
+    expect(groupPointerState!.authority?.equals(ADMIN_KEYPAIR.publicKey)).toBe(true); // Проверка authority
+    console.log("GroupPointer extension verified (address and authority).");
 
     // Проверка аккаунта метаданных
     const metadataAccInfo = await provider.connection.getAccountInfo(metadataPda, 'confirmed');
@@ -223,6 +232,7 @@ describe("Initialize Ownership NFT", () => {
     expect(decodedMetadata.name).toEqual(expectedName);
     expect(decodedMetadata.symbol).toEqual("OWNER-NFT"); // Используем константу
     expect(decodedMetadata.uri).toEqual(expectedUri);
+    expect(decodedMetadata.bump).toEqual(metadataBump); // --> Проверка Bump
     console.log("Metadata content verified.");
 
     // Проверка ATA пейера
