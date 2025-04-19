@@ -11,22 +11,24 @@ import {
   TOKEN_2022_PROGRAM_ID,
   ExtensionType,
   getMintLen,
-  ASSOCIATED_TOKEN_PROGRAM_ID
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  getAccount,
+  unpackMint,
+  getMetadataPointerState,
 } from "@solana/spl-token";
+import { BN } from "bn.js";
 
 jest.setTimeout(60000);
 
 process.env.ANCHOR_PROVIDER_LOGS = "true";
 
-describe("Initialize Token", () => {
+describe("Initialize Ownership NFT", () => {
 
-  
   const secret = Uint8Array.from(
     [206,241,118,125,82,225,7,5,234,9,67,209,37,100,26,183,190,244,124,81,227,190,190,180,237,2,24,70,14,131,36,186,196,49,119,241,84,72,174,21,39,203,148,43,111,97,189,117,219,157,187,242,107,205,96,30,175,144,175,16,189,127,73,85]
   );
    const kp = Keypair.fromSecretKey(secret);
    console.log("kp.publicKey.toBase58()", kp.publicKey.toBase58());
-
 
   // Массив из admin-keypair.json (64 байта)
   const ADMIN_SECRET_KEY = Uint8Array.from([
@@ -49,196 +51,199 @@ describe("Initialize Token", () => {
   // Participation Token Accounts (created manually in instruction)
   const participationTokenMintKp = Keypair.generate();
 
-  it("Initializes ownership NFT with Token-2022", async () => {
+  it("Initializes ownership NFT with Token-2022, MetadataPointer, and custom metadata account", async () => {
     const ticketIdString = uuidv4();
     const buffer = Buffer.alloc(16);
     parse(ticketIdString, buffer);
     const ticketIdBytes = new Uint8Array(buffer);
+    console.log("Ticket ID (String):", ticketIdString);
+    console.log("Ticket ID (Bytes):", Buffer.from(ticketIdBytes).toString("hex"));
 
-    // Ownership NFT
+    // 1. Рассчитываем PDA для Mint аккаунта
     const [ownershipNftMintPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("lottery_nft_mint"), ticketIdBytes],
       program.programId
     );
-    
-    // Создаем отдельный аккаунт для метаданных (не PDA)
-    const metadataAccount = Keypair.generate();
-    
-    // --- ЯВНЫЙ ВЫВОД ДЛЯ ДЕБАГА ---
-    console.log("ticketIdBytes (hex):", Buffer.from(ticketIdBytes).toString("hex"));
-    console.log("ownershipNftMintPda:", ownershipNftMintPda.toBase58());
-    console.log("metadata account:", metadataAccount.publicKey.toBase58());
-    // --- конец дебага ---
-    
-    const ownershipNftTokenAccount = getAssociatedTokenAddressSync(
-      ownershipNftMintPda,      // Mint
-      lotteryCreator.publicKey, // Owner
-      false,                    // allowOwnerOffCurve - usually false
-      TOKEN_2022_PROGRAM_ID,    // Token program ID
-      ASSOCIATED_TOKEN_PROGRAM_ID // ATA program ID
-    );
-    
-    // --- Call Instruction ---
-    console.log("Calling initOwnershipNft...");
-    console.log("Payer (Lottery Creator):", lotteryCreator.publicKey.toBase58());
-    console.log("Admin Pubkey:", ADMIN_KEYPAIR.publicKey.toBase58());
     console.log("Ownership NFT Mint PDA:", ownershipNftMintPda.toBase58());
-  
-    // Добавляем подробные диагностические логи для сравнения с контрактом
-    console.log("=== TEST EXPECTATION: ACCOUNT ADDRESSES ===");
-    console.log("Expected metadata_address:", metadataAccount.publicKey.toBase58());
-    console.log("Expected mint_address:", ownershipNftMintPda.toBase58());
-    console.log("Expected authority_address (admin):", ADMIN_KEYPAIR.publicKey.toBase58());
-    console.log("Expected payer_address:", lotteryCreator.publicKey.toBase58());
-    console.log("Expected system_program_address:", SystemProgram.programId.toBase58());
-    console.log("Expected token_program_address:", TOKEN_2022_PROGRAM_ID.toBase58());
-    console.log("Expected associated_token_program_address:", ASSOCIATED_TOKEN_PROGRAM_ID.toBase58());
-    
-    try {
-      // Создаем аккаунт для метаданных
-      const createMetadataAccountIx = SystemProgram.createAccount({
+
+    // 2. Рассчитываем PDA для аккаунта Метаданных (принадлежит нашей программе)
+    const [metadataPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("metadata"), ownershipNftMintPda.toBuffer()], // seeds: "metadata" + mint PDA key
+      program.programId
+    );
+    console.log("Ownership NFT Metadata PDA:", metadataPda.toBase58());
+
+    // 3. Рассчитываем адрес ATA для Payer'а
+    const ownershipNftTokenAccount = getAssociatedTokenAddressSync(
+      ownershipNftMintPda,          // mint PDA
+      lotteryCreator.publicKey,     // owner (payer)
+      false,                        // allowOwnerOffCurve
+      TOKEN_2022_PROGRAM_ID,        // token program ID
+      ASSOCIATED_TOKEN_PROGRAM_ID   // ATA program ID
+    );
+    console.log("Ownership NFT ATA for Payer:", ownershipNftTokenAccount.toBase58());
+
+    // 4. Собираем объект Accounts для вызова инструкции
+    const accounts = {
+      ownershipNftMint: ownershipNftMintPda,
+      ownershipNftMetadata: metadataPda, // Используем PDA метаданных
+      ownershipNftTokenAccount: ownershipNftTokenAccount, // Используем ATA пейера
+      payer: lotteryCreator.publicKey,
+      admin: ADMIN_KEYPAIR.publicKey,
+      systemProgram: SystemProgram.programId,
+      tokenProgram: TOKEN_2022_PROGRAM_ID,
+      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+      rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+    };
+
+    // 5. Participation Token Mint (создаем отдельно, т.к. не часть основного потока NFT)
+    // Если он не нужен для теста NFT, можно закомментировать
+    const participationTokenMintKp = Keypair.generate();
+    const participationExtensions = [ExtensionType.TransferHook, ExtensionType.MetadataPointer]; // Пример расширений
+    const participationMintLen = getMintLen(participationExtensions);
+    const lamportsForParticipationMint = await provider.connection.getMinimumBalanceForRentExemption(participationMintLen);
+    const createParticipationMintAccountIx = SystemProgram.createAccount({
         fromPubkey: lotteryCreator.publicKey,
-        newAccountPubkey: metadataAccount.publicKey,
-        lamports: await provider.connection.getMinimumBalanceForRentExemption(1000), // Выделяем достаточно места для метаданных
-        space: 1000, // Размер для метаданных
-        programId: SystemProgram.programId, // Владелец - system program (будет перенаправлено через метадата-поинтер)
-      });
-      
-      // --- CREATE ACCOUNTS OBJECT ---
-      const accounts = {
-        // Ownership NFT
-        ownershipNftMint: ownershipNftMintPda,
-        ownershipNftMetadata: metadataAccount.publicKey,
-        ownershipNftTokenAccount: ownershipNftTokenAccount,
-        // Other Accounts
-        payer: lotteryCreator.publicKey,
-        admin: ADMIN_KEYPAIR.publicKey,
-        systemProgram: SystemProgram.programId,
-        tokenProgram: TOKEN_2022_PROGRAM_ID,
-        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      };
+        newAccountPubkey: participationTokenMintKp.publicKey,
+        lamports: lamportsForParticipationMint,
+        space: participationMintLen,
+        programId: TOKEN_2022_PROGRAM_ID,
+    });
+    console.log("Create Participation Mint Ix created for:", participationTokenMintKp.publicKey.toBase58());
 
-      // 2. Participation Token Mint
-      const participationExtensions = [ExtensionType.TransferHook, ExtensionType.MetadataPointer];
-      const participationMintLen = getMintLen(participationExtensions);
-      const lamportsForParticipationMint = await provider.connection.getMinimumBalanceForRentExemption(participationMintLen);
-      console.log(`Calculated Participation mint size: ${participationMintLen}, Rent required: ${lamportsForParticipationMint}`);
-      const createParticipationMintAccountIx = SystemProgram.createAccount({
-          fromPubkey: lotteryCreator.publicKey, // Payer
-          newAccountPubkey: participationTokenMintKp.publicKey, // New account KP
-          lamports: lamportsForParticipationMint, // Rent
-          space: participationMintLen, // Size
-          programId: TOKEN_2022_PROGRAM_ID, // Owner - token program
-      });
-      console.log("Create Participation Mint Account instruction created.");
+    // 6. Формируем инструкцию вызова нашей программы
+    const initLotteryTokenInstruction = await program.methods
+      .initOwnershipNft({
+        ticketId: Array.from(ticketIdBytes),
+      })
+      .accounts(accounts)
+      .instruction();
+    console.log("Program instruction `initOwnershipNft` created.");
 
-      // 3. Get the main program instruction
-      const initLotteryTokenInstruction = await program.methods
-          .initOwnershipNft({
-            ticketId: Array.from(ticketIdBytes),
-          })
-          .accounts(accounts)
-          .instruction();
-      console.log("Main program instruction created.");
+    // 7. Собираем транзакцию
+    const transaction = new anchor.web3.Transaction();
 
-      // 4. Assemble the transaction with instructions
-      const transaction = new anchor.web3.Transaction();
-      
-      // Увеличиваем лимит вычислительных единиц для транзакции
-      const modifyComputeUnits = ComputeBudgetProgram.setComputeUnitLimit({
-        units: 400000, // Увеличиваем в 2 раза (по умолчанию 200,000)
-      });
-      transaction.add(modifyComputeUnits);
-      
-      transaction.add(createMetadataAccountIx); // Создаем аккаунт для метаданных
-      transaction.add(createParticipationMintAccountIx); // Создаем participation token mint
-      transaction.add(initLotteryTokenInstruction); // Основная инструкция
-      console.log("Transaction created with 4 instructions (ComputeBudget + 3 main instructions).");
+    // Добавляем инструкцию для увеличения лимита CU
+    const modifyComputeUnits = ComputeBudgetProgram.setComputeUnitLimit({ units: 500000 }); // Можно подбирать значение
+    transaction.add(modifyComputeUnits);
 
-      // 5. Set the fee payer and blockhash
-      transaction.feePayer = lotteryCreator.publicKey;
-      transaction.recentBlockhash = (await provider.connection.getLatestBlockhash()).blockhash;
-      console.log(`Fee payer set to ${transaction.feePayer.toBase58()}, Blockhash: ${transaction.recentBlockhash}`);
+    // Добавляем инструкцию создания participation mint (если нужна)
+    transaction.add(createParticipationMintAccountIx);
 
-      // 6. Sign the transaction with the required keys
-      transaction.partialSign(metadataAccount); // Metadata account keypair
-      transaction.partialSign(ADMIN_KEYPAIR);
-      transaction.partialSign(participationTokenMintKp);
-      console.log("Transaction partially signed by Admin, Metadata Account, and Participation Mint Kp.");
+    // Добавляем основную инструкцию нашей программы
+    transaction.add(initLotteryTokenInstruction);
+    console.log("Transaction created with instructions.");
 
-      // Final signing by the payer's wallet
-      const signedTx = await provider.wallet.signTransaction(transaction);
-      console.log("Transaction fully signed by Payer.");
+    // 8. Назначаем плательщика и получаем blockhash
+    transaction.feePayer = lotteryCreator.publicKey;
+    transaction.recentBlockhash = (await provider.connection.getLatestBlockhash()).blockhash;
+    console.log(`Fee payer: ${transaction.feePayer.toBase58()}, Blockhash: ${transaction.recentBlockhash}`);
 
-      // <<< Add check for account owner >>>
-      try {
-        const accountInfo = await provider.connection.getAccountInfo(ownershipNftMintPda);
-        if (accountInfo) {
-          console.log(`Ownership NFT Mint Account (${ownershipNftMintPda.toBase58()}) exists. Owner: ${accountInfo.owner.toBase58()}`);
-        } else {
-          console.log(`Ownership NFT Mint Account (${ownershipNftMintPda.toBase58()}) does not exist yet.`);
-        }
-      } catch (e) {
-        console.error("Error checking Ownership NFT Mint account:", e);
-      }
-      // <<< End check >>>
+    // 9. Подписываем транзакцию необходимыми ключами
+    transaction.partialSign(ADMIN_KEYPAIR); // Admin подписывает
+    transaction.partialSign(participationTokenMintKp); // KP для participation mint (если создаем)
+    console.log("Transaction partially signed by Admin and Participation Mint KP.");
 
-      // 7. Send and confirm the "raw" transaction
-      console.log("Sending fully signed raw transaction...");
-      let txSignature
-      try {
-        const simulation = await provider.connection.simulateTransaction(signedTx);
+    // Финальная подпись кошельком плательщика (провайдером)
+    const signedTx = await provider.wallet.signTransaction(transaction);
+    console.log("Transaction fully signed by Payer.");
 
-        // Анализ потребления ресурсов
-        console.log('Simulation details:', {
-          unitsConsumed: simulation.value.unitsConsumed,
-          logs: simulation.value.logs,
-        });
-      } catch (e: any) {
-        console.error("Transaction failed:", e.getLogs());
-        throw e;
-      }
-      
-      try {
-        txSignature = await provider.connection.sendRawTransaction(signedTx.serialize())
-        // .catch((e: any) => {
-        //   console.error("Transaction failed:", e.getLogs());
-        //   throw e;
-        // });
-      } catch (e: any) {
-        // Improved error logging
-        console.error("Error sending transaction:", e);
-        if (e.logs) { // Check if logs exist
-          console.error("Transaction logs:", e.logs);
-        } else {
-          console.error("No logs available for this error.")
-        }
-        throw e;
-      }
-     
-      console.log("Raw transaction sent. Signature:", txSignature!);
+    // 10. Отправка и подтверждение транзакции
+    console.log("Sending transaction...");
+    let txSignature: string | undefined = undefined;
+    try {
+      // --- Симуляция для отладки ---
+      // const simulation = await provider.connection.simulateTransaction(signedTx, { commitment: "confirmed" });
+      // console.log('Simulation Result:', simulation);
+      // if (simulation.value.err) {
+      //     console.error("SIMULATION FAILED:", simulation.value.err);
+      //     console.error("Simulation logs:", simulation.value.logs);
+      //     throw new Error(`Simulation failed: ${simulation.value.err}`);
+      // }
+      // console.log('Simulation successful. Units Consumed:', simulation.value.unitsConsumed);
+      // --- Конец Симуляции ---
 
-      const confirmation = await provider.connection.confirmTransaction(
-          txSignature!,
-          provider.connection.commitment || 'confirmed'
-      );
+      txSignature = await provider.connection.sendRawTransaction(signedTx.serialize());
+      console.log("Transaction sent. Signature:", txSignature);
 
+      const confirmation = await provider.connection.confirmTransaction({
+            signature: txSignature,
+            blockhash: transaction.recentBlockhash,
+            lastValidBlockHeight: (await provider.connection.getLatestBlockhash()).lastValidBlockHeight
+        }, 'confirmed');
+
+      console.log("Transaction confirmation status:", confirmation);
       if (confirmation.value.err) {
-          console.error("Transaction failed confirmation:", confirmation.value.err);
-          const failedTx = await provider.connection.getTransaction(txSignature!, {maxSupportedTransactionVersion: 0, commitment: "confirmed"});
-          console.error("Failed transaction logs:", failedTx?.meta?.logMessages?.join('\n')); // Join logs for better readability
-          throw new Error(`>>>> ERROR: ${confirmation.value.err}`) // No need for redundant logs here
-        }
-      } catch (error: any) { // Keep this first catch block
-        console.error("Test failed:", error);
-        if (error.logs) {
-          console.error("Error Logs:", error.logs.join('\n'));
-        }
-        throw error; // Re-throw to fail the test
+        console.error("Transaction failed confirmation:", confirmation.value.err);
+        // Попытка получить логи неудавшейся транзакции
+        const failedTx = await provider.connection.getTransaction(txSignature!, {maxSupportedTransactionVersion: 0, commitment: "confirmed"});
+        console.error("Failed transaction logs:", failedTx?.meta?.logMessages?.join('\n'));
+        throw new Error(`Transaction Confirmation Failed: ${confirmation.value.err}`);
       }
-      // Add assertions here to verify state if needed
-      console.log("Transaction successful!");
+
+      console.log(`Transaction successful! Explorer link: https://explorer.solana.com/tx/${txSignature}?cluster=custom&customUrl=${provider.connection.rpcEndpoint}`);
+
+    } catch (error: any) {
+      console.error("Error during transaction send/confirm:", error);
+      if (txSignature && !(error.message?.includes("Confirmation Failed"))) {
+         // Если ошибка не при подтверждении, а при отправке, но сигнатура есть
+          const failedTx = await provider.connection.getTransaction(txSignature, {maxSupportedTransactionVersion: 0, commitment: "confirmed"});
+          console.error("Failed transaction logs (from catch):", failedTx?.meta?.logMessages?.join('\n'));
+      } else if (error.logs) {
+         console.error("Error Logs:", error.logs);
+      }
+      throw error; // Перебрасываем ошибку, чтобы тест упал
+    }
+
+    // 11. Проверки после успешной транзакции
+    console.log("Performing post-transaction checks...");
+
+    // Проверка Mint аккаунта
+    const mintAccInfo = await provider.connection.getAccountInfo(ownershipNftMintPda, 'confirmed');
+    expect(mintAccInfo).not.toBeNull();
+    expect(mintAccInfo?.owner.equals(TOKEN_2022_PROGRAM_ID)).toBe(true);
+    console.log(`Mint account ${ownershipNftMintPda.toBase58()} exists and owned by Token-2022.`);
+    // Дополнительно: распаковка минта для проверки расширений
+    const mintData = unpackMint(ownershipNftMintPda, mintAccInfo, TOKEN_2022_PROGRAM_ID);
+    const pointerState = getMetadataPointerState(mintData);
+    expect(pointerState).not.toBeNull();
+    expect(pointerState!.metadataAddress?.equals(metadataPda)).toBe(true); // Проверяем, что указатель ссылается на наш PDA метаданных
+    console.log("MetadataPointer extension verified on mint.");
+
+    // Проверка аккаунта метаданных
+    const metadataAccInfo = await provider.connection.getAccountInfo(metadataPda, 'confirmed');
+    expect(metadataAccInfo).not.toBeNull();
+    expect(metadataAccInfo?.owner.equals(program.programId)).toBe(true); // Должен принадлежать нашей программе
+    console.log(`Metadata account ${metadataPda.toBase58()} exists and owned by program ${program.programId}.`);
+    // Распаковка данных метаданных
+    const decodedMetadata = await program.account.ownershipNftMetadata.fetch(metadataPda);
+    console.log("Decoded Metadata:", decodedMetadata);
+    const expectedName = generateLotteryTokenNameForTest(ticketIdBytes); // Используем хелпер для генерации ожидаемого имени
+    const expectedUri = generateLotteryMetadataUriForTest(ticketIdBytes);   // Используем хелпер для генерации ожидаемого URI
+    expect(decodedMetadata.name).toEqual(expectedName);
+    expect(decodedMetadata.symbol).toEqual("OWNER-NFT"); // Используем константу
+    expect(decodedMetadata.uri).toEqual(expectedUri);
+    console.log("Metadata content verified.");
+
+    // Проверка ATA пейера
+    const payerAtaInfo = await getAccount(provider.connection, ownershipNftTokenAccount, 'confirmed', TOKEN_2022_PROGRAM_ID);
+    expect(payerAtaInfo).not.toBeNull();
+    expect(payerAtaInfo.mint.equals(ownershipNftMintPda)).toBe(true);
+    expect(payerAtaInfo.owner.equals(lotteryCreator.publicKey)).toBe(true);
+    expect(payerAtaInfo.amount).toEqual(BigInt(1)); // Проверяем баланс BigInt -> number
+    console.log(`Payer ATA ${ownershipNftTokenAccount.toBase58()} exists, owned by payer, mint matches, balance is 1.`);
+
+    console.log("All checks passed!");
   });
 });
+
+// Хелперы для генерации ожидаемых значений в тесте (копия логики из lib.rs)
+function generateLotteryTokenNameForTest(uuid_bytes: Uint8Array): string {
+  return Buffer.from(uuid_bytes).toString('hex');
+}
+
+function generateLotteryMetadataUriForTest(uuid_bytes: Uint8Array): string {
+  const ticket_id_str = generateLotteryTokenNameForTest(uuid_bytes);
+  return `http://localhost:3000/api/metadata/test/${ticket_id_str}`;
+}
 
